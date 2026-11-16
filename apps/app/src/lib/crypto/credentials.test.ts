@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	CredentialDecryptError,
 	decryptSecret,
 	EncryptionConfigError,
 	encryptSecret,
@@ -49,9 +50,52 @@ describe("credential encryption", () => {
 		const encrypted = encryptSecret("sk-test-sentinel", OWNER, BINDING);
 		expect(() =>
 			decryptSecret(encrypted, OWNER, { ...BINDING, provider: "anthropic" })
-		).toThrow();
+		).toThrow(CredentialDecryptError);
 		expect(() =>
 			decryptSecret(encrypted, OWNER, { ...BINDING, model: "other-model" })
-		).toThrow();
+		).toThrow(CredentialDecryptError);
+	});
+
+	it("throws CredentialDecryptError instead of a Node GCM error when the key rotated", () => {
+		vi.stubEnv("MATI_CREDENTIALS_ENCRYPTION_KEY", KEY);
+		const encrypted = encryptSecret("sk-test-sentinel", OWNER, BINDING);
+		vi.stubEnv("MATI_CREDENTIALS_ENCRYPTION_KEY", "1".repeat(64));
+		expect(() => decryptSecret(encrypted, OWNER, BINDING)).toThrow(
+			CredentialDecryptError
+		);
+		try {
+			decryptSecret(encrypted, OWNER, BINDING);
+			expect.fail("expected decrypt to throw");
+		} catch (error) {
+			expect(error).toBeInstanceOf(CredentialDecryptError);
+			expect((error as Error).message).toBe(
+				"Could not decrypt the stored API key."
+			);
+			expect((error as Error).message).not.toMatch(/authenticate data/i);
+			expect((error as Error).message).not.toMatch(/sk-test-sentinel/);
+		}
+	});
+
+	it("does not leak Node GCM errors when legacy AAD is present and the key rotated", () => {
+		vi.stubEnv("MATI_CREDENTIALS_ENCRYPTION_KEY", KEY);
+		const encrypted = encryptSecret("sk-test-sentinel", OWNER, BINDING);
+		vi.stubEnv("MATI_CREDENTIALS_ENCRYPTION_KEY", "a".repeat(64));
+		expect(() =>
+			decryptSecret(encrypted, OWNER, {
+				...BINDING,
+				legacyBaseUrl: "https://api.openai.com",
+			})
+		).toThrow(CredentialDecryptError);
+		try {
+			decryptSecret(encrypted, OWNER, {
+				...BINDING,
+				legacyBaseUrl: "https://api.openai.com",
+			});
+			expect.fail("expected decrypt to throw");
+		} catch (error) {
+			expect(error).toBeInstanceOf(CredentialDecryptError);
+			expect((error as Error).message).not.toMatch(/Unsupported state/i);
+			expect((error as Error).message).not.toMatch(/sk-test-sentinel/);
+		}
 	});
 });

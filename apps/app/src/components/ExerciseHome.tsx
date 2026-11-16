@@ -16,35 +16,37 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { runBackground } from "../lib/background";
+import { pickPreferredOpenSession } from "../lib/sessions/trainer-consent";
 import type { ChallengeMeta } from "../lib/types";
 import { markNavigating } from "./NavigationProgress";
 import { NavLink } from "./NavLink";
+import { TrainerConsentDisclosure } from "./TrainerConsentDisclosure";
 
 export interface SessionRow {
+	created_at?: string;
 	exercise_id: string;
 	finished_at: string | null;
 	id: string;
 	started_at: string | null;
 	status: string;
+	updated_at?: string;
 }
-
-const DISCLOSURE = [
-	"Prompts and assistant replies from this session",
-	"The frozen exercise snapshot and the code you save",
-	"Browser test-run summaries (not a certificate)",
-	"Provider-reported token usage when the endpoint returns it",
-];
 
 export function ExerciseHome({
 	challenges,
 	fixtureSessions,
+	fixtureTrainerConsentAt,
 }: {
 	challenges: ChallengeMeta[];
 	fixtureSessions?: SessionRow[];
+	fixtureTrainerConsentAt?: string | null;
 }) {
 	const router = useRouter();
 	const [sessions, setSessions] = useState<SessionRow[]>(fixtureSessions ?? []);
-	const [pending, setPending] = useState<ChallengeMeta | null>(null);
+	const [trainerConsentAt, setTrainerConsentAt] = useState<string | null>(
+		fixtureTrainerConsentAt ?? null
+	);
+	const [openingId, setOpeningId] = useState<string | null>(null);
 	const [error, setError] = useState("");
 
 	useEffect(() => {
@@ -54,36 +56,53 @@ export function ExerciseHome({
 		runBackground(
 			fetch("/api/sessions")
 				.then((response) => response.json())
-				.then((body) => setSessions(body.sessions ?? []))
+				.then(
+					(body: {
+						sessions?: SessionRow[];
+						trainerConsentAt?: string | null;
+					}) => {
+						setSessions(body.sessions ?? []);
+						setTrainerConsentAt(body.trainerConsentAt ?? null);
+					}
+				)
 				.catch(() => setSessions([]))
 		);
 	}, [fixtureSessions]);
 
 	const latestFor = (exerciseId: string) =>
-		sessions.find((session) => session.exercise_id === exerciseId);
+		pickPreferredOpenSession(
+			sessions
+				.filter((session) => session.exercise_id === exerciseId)
+				.map((session) => ({
+					...session,
+					created_at: session.created_at ?? session.started_at ?? "",
+					updated_at:
+						session.updated_at ??
+						session.started_at ??
+						session.created_at ??
+						"",
+				}))
+		) ?? sessions.find((session) => session.exercise_id === exerciseId);
 
-	async function start(challenge: ChallengeMeta) {
+	async function openExercise(challenge: ChallengeMeta) {
 		setError("");
-		const created = await fetch("/api/sessions", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ exerciseId: challenge.id }),
-		});
-		const body = await created.json();
-		if (!created.ok) {
-			setError(body.error ?? "Could not create session.");
-			return;
+		setOpeningId(challenge.id);
+		try {
+			const created = await fetch("/api/sessions", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ exerciseId: challenge.id }),
+			});
+			const body = await created.json();
+			if (!created.ok) {
+				setError(body.error ?? "Could not open session.");
+				return;
+			}
+			markNavigating();
+			router.push(`/session/${body.session.id}`);
+		} finally {
+			setOpeningId(null);
 		}
-		const started = await fetch(`/api/sessions/${body.session.id}/start`, {
-			method: "POST",
-		});
-		const startedBody = await started.json();
-		if (!started.ok) {
-			setError(startedBody.error ?? "Could not start session.");
-			return;
-		}
-		markNavigating();
-		router.push(`/session/${body.session.id}`);
 	}
 
 	return (
@@ -100,6 +119,7 @@ export function ExerciseHome({
 					harness, chat with a tool-using trainer, then revisit an
 					evidence-grounded report. This is not a Google interview replica.
 				</p>
+				<TrainerConsentDisclosure acknowledged={Boolean(trainerConsentAt)} />
 			</section>
 
 			{error ? (
@@ -109,45 +129,14 @@ export function ExerciseHome({
 				</Alert>
 			) : null}
 
-			{pending ? (
-				<Alert>
-					<AlertTitle>Before this session is captured</AlertTitle>
-					<AlertDescription>
-						<p className="mb-2">
-							Mati stores the following for you only, until you delete the
-							account or we apply the documented retention window:
-						</p>
-						<ul className="mb-3 list-disc pl-5">
-							{DISCLOSURE.map((item) => (
-								<li key={item}>{item}</li>
-							))}
-						</ul>
-						<p className="mb-3">
-							Selected context is sent to the LLM endpoint you configured. There
-							is no covert monitoring. Capture starts only after you confirm.
-						</p>
-						<div className="flex flex-wrap gap-2">
-							<Button
-								onClick={() => runBackground(start(pending))}
-								type="button"
-							>
-								I understand — start session
-							</Button>
-							<Button
-								onClick={() => setPending(null)}
-								type="button"
-								variant="outline"
-							>
-								Cancel
-							</Button>
-						</div>
-					</AlertDescription>
-				</Alert>
-			) : null}
-
 			<div className="grid gap-4 md:grid-cols-2">
 				{challenges.map((challenge) => {
 					const session = latestFor(challenge.id);
+					const complete = sessions.find(
+						(row) =>
+							row.exercise_id === challenge.id && row.status === "complete"
+					);
+					const isRunning = session?.status === "running";
 					return (
 						<Card key={challenge.id}>
 							<CardHeader>
@@ -164,18 +153,24 @@ export function ExerciseHome({
 									))}
 								</ul>
 								<div className="flex flex-wrap gap-2">
-									{session?.status === "running" ? (
+									{isRunning && session ? (
 										<Button asChild>
 											<NavLink href={`/session/${session.id}`}>Resume</NavLink>
 										</Button>
 									) : (
-										<Button onClick={() => setPending(challenge)} type="button">
-											Start
+										<Button
+											disabled={openingId === challenge.id}
+											onClick={() => runBackground(openExercise(challenge))}
+											type="button"
+										>
+											{session?.status === "pending_consent"
+												? "Continue"
+												: "Start"}
 										</Button>
 									)}
-									{session?.status === "complete" ? (
+									{complete ? (
 										<Button asChild variant="secondary">
-											<NavLink href={`/session/${session.id}/report`}>
+											<NavLink href={`/session/${complete.id}/report`}>
 												View report
 											</NavLink>
 										</Button>

@@ -4,6 +4,8 @@ import { Button } from "@repo/design-system/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { runBackground } from "../lib/background";
+import { fetchWithAuthRetry } from "../lib/http/session-fetch";
+import { useSessionKeepAlive } from "../lib/session-keep-alive";
 import type { Challenge } from "../lib/types";
 import { markNavigating } from "./NavigationProgress";
 import Round from "./Round";
@@ -22,6 +24,7 @@ export default function RoundScreen({
 	startedAt: number;
 }) {
 	const router = useRouter();
+	useSessionKeepAlive();
 	const [files, setFiles] = useState(initialFiles);
 	const [saveError, setSaveError] = useState("");
 	const [conflict, setConflict] = useState(false);
@@ -32,14 +35,17 @@ export default function RoundScreen({
 
 	const persist = useCallback(
 		async (nextFiles: Record<string, string>) => {
-			const response = await fetch(`/api/sessions/${sessionId}/save`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					files: nextFiles,
-					expectedUpdatedAt: expectedUpdatedAt.current,
-				}),
-			});
+			const response = await fetchWithAuthRetry(
+				`/api/sessions/${sessionId}/save`,
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						files: nextFiles,
+						expectedUpdatedAt: expectedUpdatedAt.current,
+					}),
+				}
+			);
 			const body = await response.json().catch(() => ({}));
 			if (response.status === 409 && body.code === "revision_conflict") {
 				setConflict(true);

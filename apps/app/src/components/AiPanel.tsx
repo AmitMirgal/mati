@@ -1,5 +1,10 @@
 "use client";
 
+import {
+	Alert,
+	AlertDescription,
+	AlertTitle,
+} from "@repo/design-system/components/ui/alert";
 import { Button } from "@repo/design-system/components/ui/button";
 import { Textarea } from "@repo/design-system/components/ui/textarea";
 import Link from "next/link";
@@ -7,11 +12,41 @@ import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { runBackground } from "../lib/background";
+import {
+	fetchTrainerRequest,
+	fetchWithAuthRetry,
+} from "../lib/http/session-fetch";
 
 interface ChatMessage {
 	content: string;
 	id: string;
 	role: "user" | "assistant";
+}
+
+function TrainerError({
+	message,
+	needsReentry,
+}: {
+	message: string;
+	needsReentry: boolean;
+}) {
+	if (needsReentry) {
+		return (
+			<Alert variant="destructive">
+				<AlertTitle>Re-enter your API key</AlertTitle>
+				<AlertDescription>
+					<p>{message}</p>
+					<p>
+						<Link className="link" href="/settings#llm" prefetch>
+							Open LLM settings
+						</Link>{" "}
+						and paste your provider key again.
+					</p>
+				</AlertDescription>
+			</Alert>
+		);
+	}
+	return <div className="ai-error">{message}</div>;
 }
 
 function Reply({ text }: { text: string }) {
@@ -38,12 +73,13 @@ export default function AiPanel({ sessionId }: { sessionId: string }) {
 	const [input, setInput] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [needsReentry, setNeedsReentry] = useState(false);
 	const [source, setSource] = useState("");
 	const endRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		runBackground(
-			fetch(`/api/sessions/${sessionId}/messages`)
+			fetchWithAuthRetry(`/api/sessions/${sessionId}/messages`)
 				.then((response) => response.json())
 				.then((body) => {
 					const loaded = (body.messages ?? [])
@@ -84,22 +120,28 @@ export default function AiPanel({ sessionId }: { sessionId: string }) {
 		}
 		setBusy(true);
 		setError("");
+		setNeedsReentry(false);
 		setInput("");
 		setMessages((current) => [
 			...current,
 			{ id: crypto.randomUUID(), role: "user", content: text },
 		]);
 		try {
-			const response = await fetch(`/api/sessions/${sessionId}/chat`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					message: text,
-					clientRequestId: crypto.randomUUID(),
-				}),
-			});
+			const response = await fetchTrainerRequest(
+				sessionId,
+				`/api/sessions/${sessionId}/chat`,
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						message: text,
+						clientRequestId: crypto.randomUUID(),
+					}),
+				}
+			);
 			const body = await response.json();
 			if (!response.ok) {
+				setNeedsReentry(body.needsReentry === true);
 				setError(body.error ?? "Trainer failed.");
 				return;
 			}
@@ -146,7 +188,9 @@ export default function AiPanel({ sessionId }: { sessionId: string }) {
 				{busy ? (
 					<div className="bubble assistant thinking">working…</div>
 				) : null}
-				{error ? <div className="ai-error">{error}</div> : null}
+				{error ? (
+					<TrainerError message={error} needsReentry={needsReentry} />
+				) : null}
 				<div ref={endRef} />
 			</div>
 			<form

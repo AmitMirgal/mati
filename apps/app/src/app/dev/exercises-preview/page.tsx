@@ -18,16 +18,25 @@ export default async function ExercisesPreviewPage({
 }) {
 	const params = await searchParams;
 	const challenges = listChallenges();
-	const fixtureSessions: SessionRow[] = challenges.map((challenge, index) => ({
-		exercise_id: challenge.id,
-		finished_at: null,
-		id: `preview-session-${index + 1}`,
-		started_at: "2026-11-10T00:00:00.000Z",
-		status: "running",
-	}));
+	const first = challenges[0];
+	const fixtureSessions: SessionRow[] = first
+		? [
+				{
+					exercise_id: first.id,
+					finished_at: null,
+					id: "preview-session-1",
+					started_at: "2026-11-10T00:00:00.000Z",
+					status: "running",
+				},
+			]
+		: [];
 	return (
 		<ProgressPreviewFrame theme={parseTheme(params.theme)}>
-			<ExerciseHome challenges={challenges} fixtureSessions={fixtureSessions} />
+			<ExerciseHome
+				challenges={challenges}
+				fixtureSessions={fixtureSessions}
+				fixtureTrainerConsentAt={null}
+			/>
 		</ProgressPreviewFrame>
 	);
 }

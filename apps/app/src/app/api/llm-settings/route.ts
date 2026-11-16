@@ -84,6 +84,7 @@ export async function PUT(request: Request) {
 				provider: parsed.provider,
 				model: parsed.model,
 				keyFingerprint: secret.fingerprint,
+				needsReentry: false,
 				capabilities,
 			},
 			gaps: describeUnsupported(capabilities),

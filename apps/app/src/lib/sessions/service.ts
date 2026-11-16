@@ -1,6 +1,7 @@
 import { getChallenge } from "../challenges";
 import {
 	createSessionRow,
+	findOpenSessionForExercise,
 	getSession,
 	getSnapshot,
 	insertEvidenceOnce,
@@ -8,6 +9,7 @@ import {
 	insertTestRun,
 	insertUsageOnce,
 	saveSessionFiles,
+	stampTrainerConsent,
 	startRunningSession,
 } from "../db/queries";
 import type { MatiDb } from "../db/rls";
@@ -16,6 +18,7 @@ import { PersistenceError } from "../errors";
 import { newIdempotencyKey, operationId } from "../idempotency";
 import type { TestResult } from "../runner";
 import { buildExerciseSnapshot, hashFiles } from "../snapshot";
+import { TRAINER_CAPTURE_DISCLOSURE } from "./trainer-consent";
 
 export type SessionStatus =
 	| "pending_consent"
@@ -160,12 +163,7 @@ export async function startSession(
 		source: "learner",
 		observationType: "explicit_start",
 		payload: {
-			disclosed: [
-				"prompts and assistant replies",
-				"selected exercise snapshot",
-				"browser test summaries",
-				"provider usage when returned",
-			],
+			disclosed: [...TRAINER_CAPTURE_DISCLOSURE],
 		},
 		idempotencyKey: operationId(["consent", sessionId]),
 	});
@@ -179,6 +177,24 @@ export async function startSession(
 	} catch {
 		throw new PersistenceError("Could not start session.");
 	}
+}
+
+export async function openExerciseSession(
+	db: MatiDb,
+	userId: string,
+	exerciseId: string
+) {
+	const challenge = getChallenge(exerciseId);
+	if (!challenge) {
+		throw new Error("Unknown exercise.");
+	}
+	await stampTrainerConsent(db, userId);
+	const open = await findOpenSessionForExercise(db, userId, exerciseId);
+	if (open) {
+		return await startSession(db, userId, open.id);
+	}
+	const created = await createSession(db, userId, exerciseId);
+	return await startSession(db, userId, created.id);
 }
 
 export async function saveFiles(

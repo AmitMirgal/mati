@@ -12,6 +12,7 @@ import {
 	USER_A,
 	USER_B,
 } from "../rls/harness";
+import { openExerciseSession } from "../sessions/service";
 import { readPgPoolConnectOptions } from "./connect-options";
 import { createPrismaClient } from "./factory";
 import { inspectLivePrismaTarget } from "./live-target";
@@ -219,6 +220,51 @@ describe("Prisma request-path RLS (PGlite)", () => {
 			})
 		);
 		expect(payload?.payload).toEqual({ content: "hi" });
+	});
+
+	it("resumes the in-progress exercise session instead of creating another", async ({
+		skip: skipTest,
+	}) => {
+		if (!prisma) {
+			skipTest(skip);
+			return;
+		}
+		const first = await withUserDb(prisma, USER_A, (db) =>
+			openExerciseSession(db, USER_A, "shelf")
+		);
+		const second = await withUserDb(prisma, USER_A, (db) =>
+			openExerciseSession(db, USER_A, "shelf")
+		);
+		expect(first.id).toBe(SESSION_A);
+		expect(second.id).toBe(SESSION_A);
+		expect(second.status).toBe("running");
+	});
+
+	it("starts leftover pending_consent instead of failing to establish the session", async ({
+		skip: skipTest,
+	}) => {
+		if (!prisma) {
+			skipTest(skip);
+			return;
+		}
+		const pendingId = "55555555-5555-4555-8555-555555555555";
+		await withUserDb(prisma, USER_A, async (db) => {
+			await db.session.create({
+				data: {
+					id: pendingId,
+					userId: USER_A,
+					exerciseId: "cache",
+					status: "pending_consent",
+					files: {},
+					timezone: "UTC",
+				},
+			});
+		});
+		const opened = await withUserDb(prisma, USER_A, (db) =>
+			openExerciseSession(db, USER_A, "cache")
+		);
+		expect(opened.id).toBe(pendingId);
+		expect(opened.status).toBe("running");
 	});
 
 	it("leaves a raw Prisma transaction on the privileged login role", async ({

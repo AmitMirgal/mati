@@ -13,13 +13,16 @@ import {
 import { newIdempotencyKey, operationId } from "../../../../../lib/idempotency";
 import {
 	LlmConfigError,
+	llmConfigErrorPayload,
 	resolveLlmForUser,
 } from "../../../../../lib/llm/resolve-config";
 import { claimChatTurn } from "../../../../../lib/sessions/chat-claim";
 import {
 	insertEvidence,
 	insertUsageRecord,
+	startSession,
 } from "../../../../../lib/sessions/service";
+import { SESSION_NOT_RUNNING_ERROR } from "../../../../../lib/sessions/trainer-consent";
 import { requireUser } from "../../../../../lib/supabase/server";
 import {
 	AgentBudgetError,
@@ -66,15 +69,21 @@ export async function POST(
 		return NextResponse.json({ error: "Invalid message." }, { status: 400 });
 	}
 
-	const session = await withUserDb(userId, (db) =>
+	let session = await withUserDb(userId, (db) =>
 		db.session.findFirst({
 			where: { id },
 			select: { id: true, status: true },
 		})
 	);
+	if (session?.status === "pending_consent") {
+		const started = await withUserDb(userId, (db) =>
+			startSession(db, userId, id)
+		);
+		session = { id: started.id, status: started.status };
+	}
 	if (!session || session.status !== "running") {
 		return NextResponse.json(
-			{ error: "Session is not running." },
+			{ error: SESSION_NOT_RUNNING_ERROR },
 			{ status: 409 }
 		);
 	}
@@ -190,7 +199,7 @@ export async function POST(
 		});
 	} catch (error) {
 		if (error instanceof LlmConfigError) {
-			return NextResponse.json({ error: error.message }, { status: 400 });
+			return NextResponse.json(llmConfigErrorPayload(error), { status: 400 });
 		}
 		if (
 			error instanceof MissingToolUseError ||

@@ -18,4 +18,16 @@ describe("redactProviderError", () => {
 			"Trainer hit the time budget."
 		);
 	});
+
+	it("keeps CredentialDecryptError copy without leaking Node GCM text", () => {
+		const error = Object.assign(
+			new Error("Could not decrypt the stored API key."),
+			{
+				name: "CredentialDecryptError",
+			}
+		);
+		expect(redactProviderError(error)).toBe(
+			"Could not decrypt the stored API key."
+		);
+	});
 });

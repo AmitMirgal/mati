@@ -31,6 +31,7 @@ export function redactProviderError(error: unknown): string {
 			error.name === "RevisionConflictError" ||
 			error.name === "ToolsUnsupportedError" ||
 			error.name === "EncryptionConfigError" ||
+			error.name === "CredentialDecryptError" ||
 			error.name === "EndpointValidationError")
 	) {
 		const message =

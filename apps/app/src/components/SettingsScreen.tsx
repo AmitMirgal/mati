@@ -10,10 +10,17 @@ import { Label } from "@repo/design-system/components/ui/label";
 import { CaptureSettingsForm } from "./CaptureSettingsForm";
 import { CursorAdminSettingsForm } from "./CursorAdminSettingsForm";
 import { LeaderboardSettingsForm } from "./LeaderboardSettingsForm";
-import { LlmSettingsForm } from "./LlmSettingsForm";
+import { LlmSettingsForm, type MaskedLlmFormState } from "./LlmSettingsForm";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { TrainerConsentSettingsForm } from "./TrainerConsentSettingsForm";
 
-export function SettingsScreen({ email }: { email: string }) {
+export function SettingsScreen({
+	email,
+	llmFixture,
+}: {
+	email: string;
+	llmFixture?: { encryptionReady: boolean; settings: MaskedLlmFormState };
+}) {
 	return (
 		<main className="mx-auto grid min-w-0 max-w-2xl gap-8 px-4 py-10">
 			<h1 className="font-semibold text-3xl tracking-tight">Settings</h1>
@@ -41,9 +48,10 @@ export function SettingsScreen({ email }: { email: string }) {
 				</CardContent>
 			</Card>
 			<LeaderboardSettingsForm />
+			<TrainerConsentSettingsForm />
 			<CaptureSettingsForm />
 			<CursorAdminSettingsForm />
-			<LlmSettingsForm />
+			<LlmSettingsForm fixture={llmFixture} />
 		</main>
 	);
 }

@@ -112,4 +112,13 @@ describe("privacy regressions", () => {
 		expect(getHandler).not.toMatch(/encrypted_api_key/);
 		expect(getHandler).not.toMatch(/from\("llm_settings"\)/);
 	});
+
+	it("does not put a per-exercise accept dialog in the trainer start path", () => {
+		const source = readFileSync(
+			new URL("../components/ExerciseHome.tsx", import.meta.url),
+			"utf8"
+		);
+		expect(source).not.toMatch(/I understand — start session/);
+		expect(source).not.toMatch(/mati\.consent\.v1/);
+	});
 });

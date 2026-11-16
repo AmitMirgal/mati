@@ -1,6 +1,6 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { PersistenceError, RevisionConflictError } from "../errors";
-import { insertOnce } from "./insert-once";
+import { insertOnce, isPrismaUnique } from "./insert-once";
 import type { MatiDb } from "./rls";
 import {
 	isoRequired,
@@ -22,6 +22,70 @@ export async function listSessions(db: MatiDb, userId: string) {
 export async function getSession(db: MatiDb, sessionId: string) {
 	const session = await db.session.findFirst({ where: { id: sessionId } });
 	return session ? sessionRow(session) : null;
+}
+
+export async function findOpenSessionForExercise(
+	db: MatiDb,
+	userId: string,
+	exerciseId: string
+) {
+	const session = await db.session.findFirst({
+		where: {
+			userId,
+			exerciseId,
+			status: { in: ["pending_consent", "running"] },
+		},
+		orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+	});
+	return session ? sessionRow(session) : null;
+}
+
+export async function getTrainerConsentAt(db: MatiDb, userId: string) {
+	const row = await db.profile.findUnique({
+		where: { id: userId },
+		select: { trainerConsentAt: true },
+	});
+	return row?.trainerConsentAt ?? null;
+}
+
+export async function stampTrainerConsent(db: MatiDb, userId: string) {
+	const existing = await db.profile.findUnique({
+		where: { id: userId },
+		select: { id: true, trainerConsentAt: true },
+	});
+	if (existing?.trainerConsentAt) {
+		return existing.trainerConsentAt;
+	}
+	const at = new Date();
+	if (existing) {
+		await db.profile.update({
+			where: { id: userId },
+			data: { trainerConsentAt: at },
+		});
+		return at;
+	}
+	await db.$executeRawUnsafe("SAVEPOINT mati_trainer_consent_profile");
+	try {
+		await db.profile.create({
+			data: { id: userId, trainerConsentAt: at },
+		});
+		await db.$executeRawUnsafe(
+			"RELEASE SAVEPOINT mati_trainer_consent_profile"
+		);
+		return at;
+	} catch (error) {
+		await db.$executeRawUnsafe(
+			"ROLLBACK TO SAVEPOINT mati_trainer_consent_profile"
+		);
+		if (!isPrismaUnique(error)) {
+			throw error;
+		}
+		await db.profile.updateMany({
+			where: { id: userId, trainerConsentAt: null },
+			data: { trainerConsentAt: at },
+		});
+		return at;
+	}
 }
 
 export async function createSessionRow(
@@ -390,6 +454,7 @@ export async function getMaskedLlmRow(db: MatiDb, userId: string) {
 			provider: true,
 			model: true,
 			keyFingerprint: true,
+			needsReentry: true,
 			capabilities: true,
 		},
 	});
@@ -406,6 +471,7 @@ export async function getLlmSecrets(db: MatiDb, userId: string) {
 			encryptionIv: true,
 			encryptionTag: true,
 			keyFingerprint: true,
+			needsReentry: true,
 			capabilities: true,
 		},
 	});
@@ -431,7 +497,7 @@ export async function upsertLlmSettings(
 	const capabilities = toInputJson(input.capabilities);
 	await db.llmSettings.upsert({
 		where: { userId: input.userId },
-		create: { ...input, capabilities },
+		create: { ...input, capabilities, needsReentry: false },
 		update: {
 			provider: input.provider,
 			model: input.model,
@@ -440,8 +506,20 @@ export async function upsertLlmSettings(
 			encryptionTag: input.encryptionTag,
 			keyFingerprint: input.keyFingerprint,
 			capabilities,
+			needsReentry: false,
 			updatedAt: new Date(),
 		},
+	});
+}
+
+export async function markLlmNeedsReentry(
+	db: MatiDb,
+	userId: string,
+	needsReentry: boolean
+) {
+	await db.llmSettings.updateMany({
+		where: { userId },
+		data: { needsReentry, updatedAt: new Date() },
 	});
 }
 
