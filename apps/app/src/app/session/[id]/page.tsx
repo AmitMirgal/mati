@@ -3,6 +3,7 @@ import RoundScreen from "../../../components/RoundScreen";
 import { getChallenge } from "../../../lib/challenges";
 import { withUserDb } from "../../../lib/db/client";
 import { getSession, getSnapshotRound } from "../../../lib/db/queries";
+import { startSession } from "../../../lib/sessions/service";
 import { challengeFromSnapshot } from "../../../lib/snapshot";
 import { requireUser } from "../../../lib/supabase/server";
 
@@ -18,9 +19,12 @@ export default async function SessionPage({
 	if (!userId) {
 		redirect(`/login?next=/session/${id}`);
 	}
-	const session = await withUserDb(userId, (db) => getSession(db, id));
+	let session = await withUserDb(userId, (db) => getSession(db, id));
 	if (!session) {
 		notFound();
+	}
+	if (session.status === "pending_consent") {
+		session = await withUserDb(userId, (db) => startSession(db, userId, id));
 	}
 	if (session.status === "complete") {
 		redirect(`/session/${id}/report`);

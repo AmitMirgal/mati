@@ -43,6 +43,7 @@ describe("Mati Prisma Migrate source of truth", () => {
 		);
 		expect(names).toContain("20261110180000_device_claim_and_capture_reports");
 		expect(names).toContain("20261113070000_gamification_v1");
+		expect(names).toContain("20261116180000_trainer_consent_and_byok_reentry");
 		expect(
 			existsSync(
 				new URL(

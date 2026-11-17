@@ -19,6 +19,7 @@ export interface MaskedLlmSettings {
 	configured: boolean;
 	keyFingerprint: string | null;
 	model: string | null;
+	needsReentry: boolean;
 	provider: string | null;
 	source: "user" | "operator_default" | "none";
 }

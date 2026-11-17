@@ -33,7 +33,7 @@ import {
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { runBackground } from "../lib/background";
 
-interface Masked {
+export interface MaskedLlmFormState {
 	capabilities?: {
 		streaming?: string;
 		structuredOutput?: string;
@@ -43,18 +43,27 @@ interface Masked {
 	configured: boolean;
 	keyFingerprint: string | null;
 	model: string | null;
+	needsReentry?: boolean;
 	provider: string | null;
 	source: "user" | "operator_default" | "none";
 }
 
 const CATALOG = listMatiProviders();
 
-export function LlmSettingsForm() {
+export function LlmSettingsForm({
+	fixture,
+}: {
+	fixture?: { encryptionReady: boolean; settings: MaskedLlmFormState };
+}) {
 	const [provider, setProvider] = useState<MatiProviderId>("openai");
 	const [model, setModel] = useState("");
 	const [apiKey, setApiKey] = useState("");
-	const [masked, setMasked] = useState<Masked | null>(null);
-	const [encryptionReady, setEncryptionReady] = useState(true);
+	const [masked, setMasked] = useState<MaskedLlmFormState | null>(
+		fixture?.settings ?? null
+	);
+	const [encryptionReady, setEncryptionReady] = useState(
+		fixture?.encryptionReady ?? true
+	);
 	const [message, setMessage] = useState("");
 	const [error, setError] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -67,22 +76,39 @@ export function LlmSettingsForm() {
 	const gaps = describeCapabilityGaps(selected.capabilities);
 
 	useEffect(() => {
+		if (fixture) {
+			setMasked(fixture.settings);
+			setEncryptionReady(fixture.encryptionReady);
+			const saved = parseMatiProvider(fixture.settings.provider);
+			if (saved) {
+				setProvider(saved);
+			}
+			if (fixture.settings.model) {
+				setModel(fixture.settings.model);
+			}
+			return;
+		}
 		runBackground(
 			fetch("/api/llm-settings")
 				.then((response) => response.json())
-				.then((body: { encryptionReady?: boolean; settings?: Masked }) => {
-					setMasked(body.settings ?? null);
-					setEncryptionReady(Boolean(body.encryptionReady));
-					const saved = parseMatiProvider(body.settings?.provider);
-					if (saved) {
-						setProvider(saved);
+				.then(
+					(body: {
+						encryptionReady?: boolean;
+						settings?: MaskedLlmFormState;
+					}) => {
+						setMasked(body.settings ?? null);
+						setEncryptionReady(Boolean(body.encryptionReady));
+						const saved = parseMatiProvider(body.settings?.provider);
+						if (saved) {
+							setProvider(saved);
+						}
+						if (body.settings?.model) {
+							setModel(body.settings.model);
+						}
 					}
-					if (body.settings?.model) {
-						setModel(body.settings.model);
-					}
-				})
+				)
 		);
-	}, []);
+	}, [fixture]);
 
 	async function refresh() {
 		const response = await fetch("/api/llm-settings");
@@ -194,6 +220,16 @@ export function LlmSettingsForm() {
 							</AlertDescription>
 						</Alert>
 					)}
+					{masked?.needsReentry ? (
+						<Alert variant="destructive">
+							<AlertTitle>Re-enter your API key</AlertTitle>
+							<AlertDescription>
+								The saved API key could not be decrypted. Paste a new key below
+								and save. This usually means the server encryption key changed
+								or this environment cannot read a key saved elsewhere.
+							</AlertDescription>
+						</Alert>
+					) : null}
 					<p className="text-sm">
 						Active source: <strong>{masked?.source ?? "none"}</strong>
 						{masked?.keyFingerprint

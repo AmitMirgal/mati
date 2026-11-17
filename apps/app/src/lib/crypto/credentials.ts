@@ -16,6 +16,13 @@ export class EncryptionConfigError extends Error {
 	}
 }
 
+export class CredentialDecryptError extends Error {
+	constructor(message = "Could not decrypt the stored API key.") {
+		super(message);
+		this.name = "CredentialDecryptError";
+	}
+}
+
 export function getEncryptionKey(): Buffer {
 	const raw = matiEnv("CREDENTIALS_ENCRYPTION_KEY");
 	if (!raw) {
@@ -143,9 +150,13 @@ export function decryptSecret(
 		return decryptWithAad(secret, key, credentialAad(ownerId, binding));
 	} catch {
 		const legacy = legacyCredentialAad(ownerId, binding);
-		if (!legacy) {
-			throw new Error("Could not decrypt the stored API key.");
+		if (legacy) {
+			try {
+				return decryptWithAad(secret, key, legacy);
+			} catch {
+				throw new CredentialDecryptError();
+			}
 		}
-		return decryptWithAad(secret, key, legacy);
+		throw new CredentialDecryptError();
 	}
 }

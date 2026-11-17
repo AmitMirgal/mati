@@ -2,6 +2,12 @@
 
 Product code lives in `apps/app`. Use **pnpm** only (`pnpm@10.33.4`). Do not push `main`. Do not force-push.
 
+## ui-sdk
+
+Before using ui-sdk, follow the ui-sdk skill if it's installed, and read `node_modules/@ui-sdk/react/docs/llms.txt`. To build a new component, also search `node_modules/@ui-sdk/react/docs/core.md` by heading, and read `rendering.md` next to it.
+
+Standing UI rules still apply: shadcn components for controls (if ui-sdk and shadcn conflict, keep shadcn controls), WCAG AA contrast in light and dark, the "// Mati" logo, and full mobile responsiveness.
+
 ## Database schema
 
 Single source of truth: `apps/app/prisma/migrations/`, applied with `prisma migrate deploy`.

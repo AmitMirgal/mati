@@ -7,16 +7,40 @@ import {
 	type ResolvedLlmConfig,
 	requireMatiProvider,
 } from "@repo/ai/provider";
-import { decryptSecret, encryptionAvailable } from "../crypto/credentials";
-import { getLlmSecrets, getMaskedLlmRow, hasLlmSettings } from "../db/queries";
+import {
+	CredentialDecryptError,
+	decryptSecret,
+	encryptionAvailable,
+} from "../crypto/credentials";
+import {
+	getLlmSecrets,
+	getMaskedLlmRow,
+	hasLlmSettings,
+	markLlmNeedsReentry,
+} from "../db/queries";
 import type { MatiDb } from "../db/rls";
 import { getOperatorDefault } from "../env";
 
+export type LlmConfigErrorCode = "generic" | "credential_reentry";
+
 export class LlmConfigError extends Error {
-	constructor(message: string) {
+	readonly code: LlmConfigErrorCode;
+
+	constructor(message: string, code: LlmConfigErrorCode = "generic") {
 		super(message);
 		this.name = "LlmConfigError";
+		this.code = code;
 	}
+}
+
+export const CREDENTIAL_REENTRY_MESSAGE =
+	"The saved API key could not be decrypted. Re-enter your API key in Settings. This usually means the server encryption key changed or this environment cannot read a key saved elsewhere.";
+
+export function llmConfigErrorPayload(error: LlmConfigError) {
+	return {
+		error: error.message,
+		needsReentry: error.code === "credential_reentry",
+	};
 }
 
 function requireSupportedTools(
@@ -32,6 +56,33 @@ function requireSupportedTools(
 	return capabilities;
 }
 
+function decryptStoredKey(
+	data: NonNullable<Awaited<ReturnType<typeof getLlmSecrets>>>,
+	userId: string
+): string {
+	try {
+		return decryptSecret(
+			{
+				ciphertext: data.encryptedApiKey,
+				iv: data.encryptionIv,
+				tag: data.encryptionTag,
+				fingerprint: data.keyFingerprint,
+			},
+			userId,
+			{
+				provider: data.provider,
+				model: data.model,
+				legacyBaseUrl: data.baseUrl,
+			}
+		);
+	} catch (error) {
+		if (error instanceof CredentialDecryptError) {
+			throw error;
+		}
+		throw new CredentialDecryptError();
+	}
+}
+
 export async function getMaskedSettings(
 	db: MatiDb,
 	userId: string
@@ -45,6 +96,7 @@ export async function getMaskedSettings(
 			provider: data.provider,
 			model: data.model,
 			keyFingerprint: data.keyFingerprint,
+			needsReentry: data.needsReentry,
 			capabilities: parseProviderCapabilities(data.capabilities),
 		};
 	}
@@ -57,6 +109,7 @@ export async function getMaskedSettings(
 			provider: operator.provider,
 			model: operator.model,
 			keyFingerprint: "operator-env",
+			needsReentry: false,
 			capabilities: documentedCapabilitiesFor(operator.provider),
 		};
 	}
@@ -67,6 +120,7 @@ export async function getMaskedSettings(
 		provider: null,
 		model: null,
 		keyFingerprint: null,
+		needsReentry: false,
 		capabilities: null,
 	};
 }
@@ -85,20 +139,19 @@ export async function resolveLlmForUser(
 
 	if (data) {
 		const provider = requireMatiProvider(data.provider);
-		const apiKey = decryptSecret(
-			{
-				ciphertext: data.encryptedApiKey,
-				iv: data.encryptionIv,
-				tag: data.encryptionTag,
-				fingerprint: data.keyFingerprint,
-			},
-			userId,
-			{
-				provider: data.provider,
-				model: data.model,
-				legacyBaseUrl: data.baseUrl,
-			}
-		);
+		let apiKey: string;
+		try {
+			apiKey = decryptStoredKey(data, userId);
+		} catch {
+			await markLlmNeedsReentry(db, userId, true);
+			throw new LlmConfigError(
+				CREDENTIAL_REENTRY_MESSAGE,
+				"credential_reentry"
+			);
+		}
+		if (data.needsReentry) {
+			await markLlmNeedsReentry(db, userId, false);
+		}
 		return {
 			apiKey,
 			config: {
